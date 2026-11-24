@@ -1253,24 +1253,64 @@ void portSettingsTabs(bool inGame) {
   // buttons too; in the launcher those switch the launcher's own tabs)
   const int count = static_cast<int>(tabs.size());
   const int at = static_cast<int>(std::find(tabs.begin(), tabs.end(), sTab) - tabs.begin());
+  // By controller (handhelds): the focus starts on the chosen tab (not the search box, which needs
+  // a keyboard); right (D-pad, stick or arrow key) from the tab list goes into the tab's settings
+  // and left from a setting not being changed comes back to its tab (Dear ImGui's own navigation
+  // doesn't cross between the two lists); a tab's settings show as soon as the tab is highlighted.
+  // sFocusTab: frames to put the focus on sTab, during which the highlight doesn't choose (after
+  // the shoulder buttons the old tab keeps the focus for a frame or two). sFocusSettings: the
+  // focus to the tab's first setting this frame.
+  const auto pressed = [](ImGuiKey pad, ImGuiKey stick, ImGuiKey arrow) {
+    return ImGui::IsKeyPressed(pad) || ImGui::IsKeyPressed(stick) || ImGui::IsKeyPressed(arrow);
+  };
+  static int sFocusTab = 0;
+  static bool sFocusSettings = false;
+  if (ImGui::IsWindowAppearing()) {
+    sFocusTab = 3;
+  }
   if (ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false) || (inGame && ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false))) {
     sTab = tabs[(at + count - 1) % count];
+    sFocusTab = 3;
   } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false) ||
              (inGame && ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false))) {
     sTab = tabs[(at + 1) % count];
+    sFocusTab = 3;
   }
   ImGui::BeginChild("tabs", ImVec2(ImGui::GetFontSize() * 8.f, 0));
+  std::string highlighted;
   for (const std::string& tab : tabs) {
     if (tab == "Modes") { // the settings above, the modes and tools below
       ImGui::Separator();
     }
+    if (sFocusTab == 3 && tab == sTab) {
+      ImGui::SetKeyboardFocusHere();
+    }
     if (ImGui::Selectable(trl(tab.c_str()), tab == sTab)) {
       sTab = tab;
+    }
+    if (ImGui::GetIO().NavVisible && ImGui::IsItemFocused()) {
+      highlighted = tab;
+    }
+  }
+  if (sFocusTab > 0) {
+    sFocusTab--;
+  } else if (!highlighted.empty()) {
+    sTab = highlighted; // (next frame's list shows it)
+    if (pressed(ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight, ImGuiKey_RightArrow)) {
+      sFocusSettings = true;
     }
   }
   ImGui::EndChild();
   ImGui::SameLine();
   ImGui::BeginChild("tab", ImVec2(0, 0));
+  if (sFocusSettings) {
+    ImGui::SetKeyboardFocusHere(); // the first setting that takes the focus
+    sFocusSettings = false;
+  } else if (ImGui::GetIO().NavVisible && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
+             !ImGui::IsAnyItemActive() &&
+             pressed(ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft, ImGuiKey_LeftArrow)) {
+    sFocusTab = 3; // back to the tab (next frame)
+  }
   ImGui::PushItemWidth(ImGui::GetFontSize() * 14.f); // controls a readable width, labels beside them
   const char* group = nullptr;
   bool first = true;

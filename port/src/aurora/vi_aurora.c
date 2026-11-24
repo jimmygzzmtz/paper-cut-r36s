@@ -6,6 +6,7 @@
 #include <dolphin/os.h>
 #include <dolphin/vi.h>
 #include <SDL3/SDL_timer.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include "port/aurora_pc.h"
 #include "port/resume.h"
@@ -26,6 +27,9 @@
 #include "port/companion_menu.h"
 #include "port/companion.h"
 #include "port/toggles.h"
+#include "port/frame_prof.h"
+#include "port/sample_prof.h"
+#include "mario/mariost.h"
 #ifdef PORT_TOUCH_OVERLAY
 #include "port/touch_overlay.h"
 #endif
@@ -46,6 +50,25 @@ static VIRetraceCallback sPostCallback;
 #define FIELD_TICKS (OS_TIMER_CLOCK / portFieldRate()) /* 60, or 50: PAL in 50 Hz */
 static OSTime sNextRetrace;
 
+/* RK3326: each drawn frame is put on screen right after its field's wait
+ * (aurora_flush_present in retrace), on the 60 Hz grid, instead of inside the
+ * next frame's aurora_end_frame -- whenever that frame's logic and drawing
+ * happened to finish, which made the 30 FPS cadence uneven. The wait itself is
+ * SDL_DelayPrecise again (as upstream), so the grid is exact.
+ * $TTYD_LEGACY_PACING=1: the previous behaviour (plain sleep, present at the
+ * next frame's end), for comparison on the device. */
+static int legacyPacing(void) {
+    static int sLegacy = -1;
+    if (sLegacy < 0) {
+        sLegacy = getenv("TTYD_LEGACY_PACING") != NULL;
+        if (sLegacy) {
+            printf("[pacing] legacy: present at the next frame's end\n");
+            fflush(stdout);
+        }
+    }
+    return sLegacy;
+}
+
 static void waitUntil(OSTime when) {
     static int sFast = -1;
     OSTime now = OSGetTime();
@@ -53,7 +76,12 @@ static void waitUntil(OSTime when) {
         sFast = getenv("TTYD_FAST") != NULL;
     }
     if (!sFast && now < when && !portOnlineCatchingUp()) { /* (a watcher well behind: unpaced) */
-        SDL_DelayNS((Uint64)OSTicksToMicroseconds(when - now) * 1000);
+        const Uint64 ns = (Uint64)OSTicksToMicroseconds(when - now) * 1000;
+        if (legacyPacing()) {
+            SDL_DelayNS(ns);
+        } else {
+            SDL_DelayPrecise(ns);
+        }
     }
 }
 
@@ -404,7 +432,14 @@ static void retrace(int drawn) {
         portDisplayWorkDone();
         endFrame();
     }
+    portProfMark(PROF_END_FRAME);
+    portSampleProfRoom(gp != NULL ? gp->currentMapName : NULL);
     paceFrame();
+    portProfMark(PROF_SLEEP);
+    if (drawn && !legacyPacing()) {
+        aurora_try_flush_present(); /* this frame on screen now if the worker has it ready (legacyPacing); else at the next frame's end, as before */
+    }
+    portProfMark(PROF_PRESENT);
     if (sPreCallback != NULL) {
         sPreCallback(sRetraceCount);
     }
@@ -455,6 +490,8 @@ static void retrace(int drawn) {
     if (!drawn) {
         handleEvents(aurora_update()); /* (input as every frame; the frame begun stays the next one's) */
         portDisplayFrameStart();
+        portProfMark(PROF_OTHER);
+        portProfFrameEnd(0);
         return;
     }
     if (portFrameAdvanceWait()) {
@@ -473,6 +510,8 @@ static void retrace(int drawn) {
     }
     portAuroraBeginFrame();
     portCompanionMenuFrame(); /* the second screen's Start menu, drawn before the game's frame (companion_menu_aurora.c) */
+    portProfMark(PROF_OTHER);
+    portProfFrameEnd(1);
 }
 
 void VIWaitForRetrace(void) {

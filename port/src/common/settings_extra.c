@@ -24,10 +24,26 @@ typedef struct Extra {
 static Extra sExtra[EXTRA_MAX];
 static int sCount;
 
+/* Lookups by key run every frame (and per object in some features), against hundreds of
+ * settings: a strcmp scan showed up in the RK3326 profile. Callers pass string literals, so a
+ * small cache by the key's address finds the entry again with one strcmp (which also keeps a
+ * reused buffer holding another key correct). Entries are never removed, so they stay valid. */
+#define FIND_CACHE 256
+static struct {
+    const char* key;
+    Extra* e;
+} sFindCache[FIND_CACHE];
+
 static Extra* find(const char* key) {
+    const unsigned slot = (unsigned)(((size_t)key >> 3) ^ ((size_t)key >> 11)) & (FIND_CACHE - 1);
     int i;
+    if (sFindCache[slot].key == key && strcmp(sFindCache[slot].e->key, key) == 0) {
+        return sFindCache[slot].e;
+    }
     for (i = 0; i < sCount; i++) {
         if (strcmp(sExtra[i].key, key) == 0) {
+            sFindCache[slot].key = key;
+            sFindCache[slot].e = &sExtra[i];
             return &sExtra[i];
         }
     }

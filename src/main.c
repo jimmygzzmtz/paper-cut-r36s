@@ -6,6 +6,7 @@
 #ifdef TARGET_PC
 #include "port/platform.h"
 #include "port/toggles.h"
+#include "port/frame_prof.h"
 #endif
 
 /**
@@ -25,7 +26,9 @@ int main(void) {
             /* battery saver: this frame runs, its cameras and draw list as ever, but
              * nothing is drawn or shown (port/toggles.h) */
             marioStDisp();
+            portProfMark(PROF_DISP_UNDRAWN);
             marioStMain();
+            portProfMark(PROF_MAIN);
             gp->deltaGame = OSGetTick() - base_tick;
             portBatteryFrameUndrawn();
             gp->deltaRender = OSGetTick() - base_tick;
@@ -34,7 +37,13 @@ int main(void) {
 #endif
         DEMOBeforeRender();
         marioStDisp();
+#ifdef TARGET_PC
+        portProfMark(PROF_DISP_DRAWN);
+#endif
         marioStMain();
+#ifdef TARGET_PC
+        portProfMark(PROF_MAIN);
+#endif
         gp->deltaGame = OSGetTick() - base_tick;
         DEMODoneRender();
         gp->deltaRender = OSGetTick() - base_tick;

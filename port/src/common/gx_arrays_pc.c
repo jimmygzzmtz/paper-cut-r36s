@@ -43,11 +43,28 @@ static inline void bumpDiscEpoch(void) {
     __atomic_fetch_add(&sDiscEpoch, 1u, __ATOMIC_RELEASE);
 }
 
+/* portGXIsDiscData's answers, cached by pointer (animdrv.c asks up to four times per paper
+ * character part per frame; a crowded room is thousands of scans over sArrays and sBlobs: it
+ * showed in the RK3326 profile). sLookupGen moves whenever either table changes, which drops
+ * every cached answer at once. */
+#define IS_DISC_CACHE 128
+static unsigned int sLookupGen = 1;
+static struct {
+    const void* data;
+    unsigned int gen;
+    int result;
+} sIsDiscCache[IS_DISC_CACHE];
+
+static inline void bumpLookupGen(void) {
+    __atomic_fetch_add(&sLookupGen, 1u, __ATOMIC_RELEASE);
+}
+
 static void registerArray(const void* data, unsigned int size, int le) {
     unsigned int i;
     if (!data) {
         return;
     }
+    bumpLookupGen();
     for (i = 0; i < PORT_GX_ARRAY_REGISTRY; i++) {
         if (sArrays[i].data == data) {
             sArrays[i].size = size;
@@ -76,6 +93,7 @@ void portGXRegisterDiscBlob(const void* base, unsigned int size) {
         return;
     }
     bumpDiscEpoch();
+    bumpLookupGen();
     for (i = 0; i < sBlobTop; i++) {
         if (sBlobs[i].base == base) {
             sBlobs[i].size = size;
@@ -112,6 +130,7 @@ void portGXUnregisterDiscBlob(const void* base) {
     unsigned int i;
     unsigned int size = 0;
     bumpDiscEpoch();
+    bumpLookupGen();
     for (i = 0; i < sBlobTop; i++) {
         if (sBlobs[i].base == base) {
             if (sBlobs[i].size > size) {
@@ -208,15 +227,13 @@ void portGXForgetRange(const void* lo_, const void* hi_) {
     }
     if (dirty) {
         bumpDiscEpoch();
+        bumpLookupGen();
     }
 }
 
-int portGXIsDiscData(const void* data) {
+static int isDiscDataScan(const void* data) {
     const uint8_t* p = (const uint8_t*)data;
     unsigned int i;
-    if (!data) {
-        return 0;
-    }
     for (i = 0; i < PORT_GX_ARRAY_REGISTRY; i++) {
         if (sArrays[i].data == data) {
             return !sArrays[i].le;
@@ -228,6 +245,23 @@ int portGXIsDiscData(const void* data) {
         }
     }
     return 0;
+}
+
+int portGXIsDiscData(const void* data) {
+    const unsigned int gen = __atomic_load_n(&sLookupGen, __ATOMIC_ACQUIRE);
+    const unsigned int slot = (unsigned int)(((size_t)data >> 4) ^ ((size_t)data >> 12)) & (IS_DISC_CACHE - 1);
+    int result;
+    if (!data) {
+        return 0;
+    }
+    if (sIsDiscCache[slot].data == data && sIsDiscCache[slot].gen == gen) {
+        return sIsDiscCache[slot].result;
+    }
+    result = isDiscDataScan(data);
+    sIsDiscCache[slot].data = data;
+    sIsDiscCache[slot].gen = gen;
+    sIsDiscCache[slot].result = result;
+    return result;
 }
 
 int portGXArrayInfo(const void* data, unsigned int* size, int* le) {

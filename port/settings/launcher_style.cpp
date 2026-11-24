@@ -27,7 +27,28 @@ namespace {
 
 ImGuiStyle sSaved;
 float sSavedFontScale = 1.f;
-constexpr float kFontLoadScale = 2.f; // fonts are loaded at twice their 1x size
+// Fonts are loaded at the largest scale the UI grows to (launcherUiScale: up to 2x, from a
+// 1280x800 window's), so text stays crisp. A screen no bigger than 1280x800 (handhelds: 640x480)
+// never goes past 1x, so its fonts load at 1x: a quarter of the atlas (2048x2048 RGBA, 16 MiB on
+// the GPU plus 20 MiB of CPU copies, down to 1024x1024) -- a real share of a 1 GiB RK3326.
+float sFontLoadScale = 2.f;
+
+float fontLoadScale() {
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
+  return 2.f; // touch screens size the UI in points, past 1x on small screens too
+#endif
+  int count = 0;
+  SDL_DisplayID* displays = SDL_GetDisplays(&count);
+  bool small = count > 0;
+  for (int i = 0; i < count; i++) {
+    const SDL_DisplayMode* mode = SDL_GetDesktopDisplayMode(displays[i]);
+    if (mode == nullptr || mode->w > 1280 || mode->h > 800) {
+      small = false;
+    }
+  }
+  SDL_free(displays);
+  return small ? 1.f : 2.f;
+}
 bool sStyled = false;
 
 ImFont* addFont(const unsigned char* data, unsigned int size, float px) {
@@ -76,7 +97,8 @@ extern "C" void portUiInit(void) {
     return;
   }
   // at the largest scale the UI grows to, drawn smaller (FontGlobalScale), so text stays crisp
-  const float load = kFontLoadScale * launcherFontsScale();
+  sFontLoadScale = fontLoadScale();
+  const float load = sFontLoadScale * launcherFontsScale();
   // the first font is ImGui's default (the overlays'): keep it ImGui's own
   if (ImGui::GetIO().Fonts->Fonts.empty()) {
     ImGui::GetIO().Fonts->AddFontDefault();
@@ -108,7 +130,7 @@ void launcherStyleInit(float scale) {
   sStyled = true;
   portUiInit();
   sSavedFontScale = ImGui::GetIO().FontGlobalScale;
-  ImGui::GetIO().FontGlobalScale = scale / (kFontLoadScale * launcherFontsScale());
+  ImGui::GetIO().FontGlobalScale = scale / (sFontLoadScale * launcherFontsScale());
   sSaved = ImGui::GetStyle();
   launcherPaperStyle(ImGui::GetStyle(), scale);
 }

@@ -16,6 +16,16 @@
 # =============================================================================
 GAME_LANGUAGE="es"
 
+# CPU: "performance" (every core held at the OS's clock limit, your overclock included: more
+# frames, warmer) or "balanced" (schedutil: cooler, longer battery). The limit itself is untouched.
+CPU_MODE="performance"
+
+# Frame timing details in log.txt every half second, for tuning (1 on, 0 off)
+TIMING_LOG=0
+
+# Which functions use the CPU, sampled into papercut/profile.bin + profile.maps, for tuning (1 on, 0 off)
+SAMPLE_PROFILE=0
+
 # Pre-kill any stale instances to ensure DRM master and inputs are completely free
 sudo killall -9 ttyd-eu gptokeyb gptokeyb2 2>/dev/null || true
 
@@ -62,68 +72,9 @@ if [ -n "$MALI_BLOB" ]; then
   ln -sf "$MALI_BLOB" "$MALI_DIR/libgbm.so"
 fi
 
-# =============================================================================
-# SPLASH / LOADING SCREEN (Resolution-matched, centered with edge replication)
-# =============================================================================
-SPLASH_PID=""
-cleanup() {
-  [ -n "$SPLASH_PID" ] && kill -9 "$SPLASH_PID" 2>/dev/null || true
-}
+# (no loading splash: the game's own logos show as soon as it starts)
+cleanup() { :; }
 trap cleanup EXIT
-
-CUR_RES=""
-if [ -x "$controlfolder/sdl_resolution.$DEVICE_ARCH" ]; then
-  CUR_RES=$("$controlfolder/sdl_resolution.$DEVICE_ARCH" 2>/dev/null | grep -a 'Current' | awk -F ': ' '{print $2}')
-fi
-if [ -z "$CUR_RES" ] && [ -n "$DISPLAY_WIDTH" ] && [ -n "$DISPLAY_HEIGHT" ]; then
-  CUR_RES="${DISPLAY_WIDTH}x${DISPLAY_HEIGHT}"
-fi
-if [ -z "$CUR_RES" ] && [ -f "/sys/class/graphics/fb0/virtual_size" ]; then
-  CUR_RES=$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null | tr ',' 'x')
-fi
-[ -z "$CUR_RES" ] && CUR_RES="640x480"
-
-SPLASH_IMG=""
-if [ -f "$GAMEDIR/Logo_${CUR_RES}.jpg" ]; then
-  SPLASH_IMG="$GAMEDIR/Logo_${CUR_RES}.jpg"
-fi
-
-if [ -z "$SPLASH_IMG" ] && [ -n "$CUR_RES" ]; then
-  RES_W=$(echo "$CUR_RES" | cut -d'x' -f 1)
-  RES_H=$(echo "$CUR_RES" | cut -d'x' -f 2)
-  if [ -n "$RES_W" ] && [ -n "$RES_H" ] && [ "$RES_H" -gt 0 ]; then
-    RATIO=$(( (RES_W * 100) / RES_H ))
-    if [ "$RATIO" -ge 165 ]; then
-      [ -f "$GAMEDIR/Logo_16x9.jpg" ] && SPLASH_IMG="$GAMEDIR/Logo_16x9.jpg"
-    elif [ "$RATIO" -ge 140 ] && [ "$RATIO" -le 160 ]; then
-      [ -f "$GAMEDIR/Logo_3x2.jpg" ] && SPLASH_IMG="$GAMEDIR/Logo_3x2.jpg"
-    elif [ "$RATIO" -ge 120 ] && [ "$RATIO" -le 139 ]; then
-      [ -f "$GAMEDIR/Logo_4x3.jpg" ] && SPLASH_IMG="$GAMEDIR/Logo_4x3.jpg"
-    elif [ "$RATIO" -le 110 ]; then
-      [ -f "$GAMEDIR/Logo_1x1.jpg" ] && SPLASH_IMG="$GAMEDIR/Logo_1x1.jpg"
-    fi
-  fi
-fi
-
-if [ -z "$SPLASH_IMG" ] || [ ! -f "$SPLASH_IMG" ]; then
-  if [ -f "$GAMEDIR/Logo_640x480.jpg" ]; then
-    SPLASH_IMG="$GAMEDIR/Logo_640x480.jpg"
-  else
-    SPLASH_IMG="$GAMEDIR/Logo.jpg"
-  fi
-fi
-
-if [ -f "$SPLASH_IMG" ]; then
-  if [ -x "$controlfolder/sdl2imgshow.$DEVICE_ARCH" ]; then
-    echo "[port] Showing loading splash $SPLASH_IMG for $CUR_RES ($controlfolder/sdl2imgshow.$DEVICE_ARCH)"
-    LD_LIBRARY_PATH="$MALI_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$controlfolder/sdl2imgshow.$DEVICE_ARCH" -i "$SPLASH_IMG" -S fit -c "000000" -b ttyd-eu &
-    SPLASH_PID=$!
-  elif [ -x "$controlfolder/sdl2imgshow" ]; then
-    echo "[port] Showing loading splash $SPLASH_IMG for $CUR_RES ($controlfolder/sdl2imgshow)"
-    LD_LIBRARY_PATH="$MALI_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$controlfolder/sdl2imgshow" -i "$SPLASH_IMG" -S fit -c "000000" -b ttyd-eu &
-    SPLASH_PID=$!
-  fi
-fi
 
 > "$GAMEDIR/log.txt" && exec > >(tee "$GAMEDIR/log.txt") 2>&1
 
@@ -179,16 +130,27 @@ for cpu in /sys/devices/system/cpu/cpu[0-3]/online; do
   [ -f "$cpu" ] && echo 1 | sudo tee "$cpu" >/dev/null 2>&1 || true
 done
 
-# CPU governor: prefer schedutil to scale dynamic clock (408MHz-1.2GHz) on demand
-# while allowing CPU sleep states during vsync (averts 78C thermal throttling).
-if [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
-  if grep -q "schedutil" /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null; then
+# CPU governor (CPU_MODE at the top). The firmware's own clock limit (an overclock set in the OS,
+# e.g. 1380 MHz) is kept as it is: the previous script forced the maximum down to 1.2 GHz on every
+# launch and never put it back. "performance" holds every core at that limit -- the game is
+# CPU-bound on the Cortex-A35, and schedutil dropped the clock during each frame's wait, so every
+# frame started slow. "balanced": schedutil (cooler, longer battery, fewer frames).
+# Whatever is changed here is restored when the game exits.
+CPUFREQ=/sys/devices/system/cpu/cpu0/cpufreq
+if [ -f "$CPUFREQ/scaling_governor" ]; then
+  CPU_OLD_GOV=$(cat "$CPUFREQ/scaling_governor" 2>/dev/null)
+  CPU_OLD_MIN=$(cat "$CPUFREQ/scaling_min_freq" 2>/dev/null)
+  restore_cpu() {
+    [ -n "$CPU_OLD_GOV" ] && echo "$CPU_OLD_GOV" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null 2>&1
+    [ -n "$CPU_OLD_MIN" ] && echo "$CPU_OLD_MIN" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_min_freq >/dev/null 2>&1
+  }
+  trap 'cleanup; restore_cpu' EXIT
+  if [ "$CPU_MODE" = "balanced" ] && grep -q "schedutil" "$CPUFREQ/scaling_available_governors" 2>/dev/null; then
     echo schedutil | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null 2>&1 || true
-    echo 816000 | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_min_freq >/dev/null 2>&1 || true
-    echo 1200000 | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq >/dev/null 2>&1 || true
   else
     echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null 2>&1 || true
   fi
+  echo "[cpu] mode=${CPU_MODE:-performance} governor=$(cat "$CPUFREQ/scaling_governor" 2>/dev/null) cur=$(cat "$CPUFREQ/scaling_cur_freq" 2>/dev/null) max=$(cat "$CPUFREQ/scaling_max_freq" 2>/dev/null) kHz (hw max $(cat "$CPUFREQ/cpuinfo_max_freq" 2>/dev/null))"
 fi
 
 # Mali GPU devfreq governor -> performance (~520 MHz)
@@ -284,6 +246,8 @@ mkdir -p "$GAMEDIR/cache"
 mkdir -p "$GAMEDIR/saves"
 
 export TTYD_DISC="$DISC_PATH"
+[ "$TIMING_LOG" = "1" ] && export TTYD_TIMING_LOG=1
+[ "$SAMPLE_PROFILE" = "1" ] && export TTYD_SAMPLE_PROFILE=1
 export TTYD_GPU="opengles"
 export TTYD_MSAA=0
 export TTYD_CACHE_DIR="$GAMEDIR/cache"

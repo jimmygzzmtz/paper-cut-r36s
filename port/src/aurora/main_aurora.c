@@ -14,6 +14,7 @@
 #include <dolphin/pad.h>
 #include <dolphin/gx/GXAurora.h>
 #include "port/replay.h"
+#include "port/sample_prof.h"
 #include "port/tr.h"
 #include "port/widescreen.h"
 #include <stdbool.h>
@@ -196,6 +197,7 @@ int aurora_main(int argc, char* argv[]) {
         }
     }
     portCrashInit();
+    portSampleProfInit(); /* $TTYD_SAMPLE_PROFILE: before Aurora starts its threads */
 #if defined(__APPLE__) && TARGET_OS_OSX
     /* No window restoration: after a crash or a killed run, macOS would ask
      * "reopen windows?" in a modal alert before the game starts (blocking
