@@ -3,7 +3,7 @@ Paper Cut for the R36S and other RK3326 handhelds (PortMaster)
 
 A native port of Paper Mario: The Thousand-Year Door, built from the Paper Cut
 decompilation, for Rockchip RK3326 / Mali-G31 handhelds (R36S and similar).
-Source and credits: https://github.com/jimmygzzmtz/paper-cut
+Source and credits: https://github.com/jimmygzzmtz/paper-cut-r36s
 
 NO GAME DATA IS INCLUDED. You need your own legal copy of the European
 release (PAL, game ID G8MP01) as a disc image.

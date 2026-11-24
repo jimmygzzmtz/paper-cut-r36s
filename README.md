@@ -103,7 +103,7 @@ dArkOS-class firmware has), linking the same SDL3-over-SDL2 shim the package shi
 
 ```bash
 sudo apt install clang-21 lld-21 llvm-21 cmake ninja-build git python3 binutils-aarch64-linux-gnu
-git clone --recursive https://github.com/jimmygzzmtz/paper-cut.git && cd paper-cut
+git clone --recursive https://github.com/jimmygzzmtz/paper-cut-r36s.git && cd paper-cut-r36s
 
 # the arm64 sysroot (no root needed)
 python3 tools/rk3326/make_sysroot.py ~/rk3326-build/sysroot
