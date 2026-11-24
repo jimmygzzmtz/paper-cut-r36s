@@ -1,3 +1,4 @@
 [submodule "extern/aurora"]
 	path = extern/aurora
-	url = https://github.com/jbcgames/aurora.git
+	url = https://github.com/jimmygzzmtz/aurora-r36s.git
+	branch = r36s

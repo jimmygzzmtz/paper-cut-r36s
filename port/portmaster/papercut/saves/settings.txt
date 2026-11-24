@@ -9,4 +9,4 @@ msaa=0
 no_pop_in=0
 pal_50hz=0
 skip_intro=0
-language=4
+language=1

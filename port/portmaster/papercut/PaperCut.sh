@@ -5,16 +5,15 @@
 # =============================================================================
 
 # =============================================================================
-# 0. SELECTOR DE IDIOMA / LANGUAGE SELECTOR (Version Europea G8MP01)
-#    Indica el idioma deseado en GAME_LANGUAGE:
-#      es (o 4) -> Espanol  [por defecto]
-#      en (o 1) -> English  (Ingles)
-#      de (o 2) -> Deutsch  (Aleman)
-#      fr (o 3) -> Francais (Frances)
-#      it (o 5) -> Italiano
-#      auto     -> Usa saves/settings.txt o el idioma del sistema
+# 0. LANGUAGE (European release, G8MP01)
+#      en (or 1) -> English  [default]
+#      de (or 2) -> Deutsch
+#      fr (or 3) -> Francais
+#      es (or 4) -> Espanol
+#      it (or 5) -> Italiano
+#      auto      -> whatever saves/settings.txt or the system says
 # =============================================================================
-GAME_LANGUAGE="es"
+GAME_LANGUAGE="en"
 
 # CPU: "performance" (every core held at the OS's clock limit, your overclock included: more
 # frames, warmer) or "balanced" (schedutil: cooler, longer battery). The limit itself is untouched.
@@ -259,7 +258,7 @@ export TTYD_USER_DIR="${TTYD_USER_DIR:-$GAMEDIR/saves}"
 mkdir -p "$TTYD_USER_DIR"
 
 # Apply European (G8MP01) language selection from GAME_LANGUAGE
-LANG_RAW=$(printf '%s' "${GAME_LANGUAGE:-es}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+LANG_RAW=$(printf '%s' "${GAME_LANGUAGE:-en}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 LANG_CODE=""
 SETTINGS_LANG=""
 case "$LANG_RAW" in
@@ -276,8 +275,8 @@ case "$LANG_RAW" in
   auto|"")
     unset TTYD_LANGUAGE ;;
   *)
-    echo "[lang] WARNING: Unknown GAME_LANGUAGE='$GAME_LANGUAGE', falling back to 'es' (Spanish)"
-    LANG_CODE="es"; SETTINGS_LANG="4" ;;
+    echo "[lang] WARNING: Unknown GAME_LANGUAGE='$GAME_LANGUAGE', falling back to 'en' (English)"
+    LANG_CODE="en"; SETTINGS_LANG="1" ;;
 esac
 
 if [ -n "$LANG_CODE" ]; then
