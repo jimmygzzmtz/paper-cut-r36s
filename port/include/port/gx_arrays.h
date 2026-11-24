@@ -38,6 +38,10 @@ void portGXRegisterArrayRange(const void* base, unsigned int size, int le);
  * pointer is registered or inside a disc blob; returns 0 (native, size
  * unknown) otherwise. */
 int portGXArrayInfo(const void* data, unsigned int* size, int* le);
+/* The GX thread (Aurora's, $TTYD_GX_THREAD=1): hand it the GX commands written so far once at
+ * least minBytes are waiting (0: all of them), so they are translated while the game goes on.
+ * Between GX calls only. Headless: nothing. */
+void portGXKick(unsigned int minBytes);
 /* Drops every registration (blob, array, range) starting in [lo, hi): the
  * memory was freed or its heap cleared (portMemForget, port/mem_pc.h). */
 void portGXForgetRange(const void* lo, const void* hi);

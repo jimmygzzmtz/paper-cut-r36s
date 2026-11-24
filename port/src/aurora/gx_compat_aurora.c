@@ -24,6 +24,10 @@ static inline void portGXSyncDiscEpoch(void) {
     }
 }
 
+void portGXKick(unsigned int minBytes) {
+    AuroraGXKick(minBytes);
+}
+
 void portGXSetArrayExplicit(int attr, const void* data, unsigned int size, unsigned char stride, int le);
 void portGXSetArrayExplicit(int attr, const void* data, unsigned int size, unsigned char stride, int le) {
     portGXSyncDiscEpoch();

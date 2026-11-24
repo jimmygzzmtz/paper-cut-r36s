@@ -109,3 +109,8 @@ void GXReadBoundingBox(u16* left, u16* top, u16* right, u16* bottom) {
     *right = 639;
     *bottom = 479;
 }
+
+/* Aurora's GX thread (port/gx_arrays.h): headless translates nothing. */
+void portGXKick(unsigned int minBytes) {
+    (void)minBytes;
+}

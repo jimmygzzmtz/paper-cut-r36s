@@ -13,6 +13,7 @@
 #include "port/hud.h"
 #include "port/platform.h"
 #include "port/toggles.h"
+#include "port/gx_arrays.h"
 
 extern DispCallback portMapDispObjCb(void);
 extern int portMapIsSafeOpaqueObj(const void* param);
@@ -391,6 +392,7 @@ void dispDraw(CameraId camId) {
 #endif
         DispEntry* entry = pSortWork[i];
 #ifdef TARGET_PC
+        portGXKick(32 * 1024); /* (Aurora's GX thread: translating while the list is drawn) */
         if (i == 0 && sSafeMapRunActive) {
             portMapDispRunEnd();
             sSafeMapRunActive = 0;

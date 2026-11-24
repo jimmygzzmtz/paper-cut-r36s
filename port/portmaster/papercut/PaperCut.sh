@@ -23,6 +23,9 @@ CPU_MODE="performance"
 # Frame timing details in log.txt every half second, for tuning (1 on, 0 off)
 TIMING_LOG=0
 
+# GX translation on its own CPU core, beside the game (1 on, 0 off: all on the game's thread, as before)
+GX_THREAD=1
+
 # Which functions use the CPU, sampled into papercut/profile.bin + profile.maps, for tuning (1 on, 0 off)
 SAMPLE_PROFILE=0
 
@@ -248,6 +251,7 @@ mkdir -p "$GAMEDIR/saves"
 export TTYD_DISC="$DISC_PATH"
 [ "$TIMING_LOG" = "1" ] && export TTYD_TIMING_LOG=1
 [ "$SAMPLE_PROFILE" = "1" ] && export TTYD_SAMPLE_PROFILE=1
+[ "$GX_THREAD" = "1" ] && export TTYD_GX_THREAD=1
 export TTYD_GPU="opengles"
 export TTYD_MSAA=0
 export TTYD_CACHE_DIR="$GAMEDIR/cache"

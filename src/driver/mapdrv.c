@@ -679,6 +679,17 @@ static MapObject* mapEntrySub(MapFileJoint* joint, MapObject* parent, Mtx mtx, B
     return obj;
 }
 
+#ifdef TARGET_PC
+/* Name lookups mapMain repeats every frame (each animated joint's object, each material track's
+ * table entry: linear strcmp scans over every map object, thousands a frame in Rogueport, a hot
+ * spot in the RK3326 profile) are cached; sMapLookupGen moves whenever map objects or material
+ * tables are made or freed, dropping every cached answer. */
+static u32 sMapLookupGen = 1;
+#define PORT_MAP_LOOKUPS_CHANGED() (sMapLookupGen++)
+#else
+#define PORT_MAP_LOOKUPS_CHANGED() ((void)0)
+#endif
+
 /**
  * Allocates the MapObject array for map entry index, one per joint,
  * and builds the object tree from the root joint with world matrix mtx; returns the root object.
@@ -691,6 +702,7 @@ static MapObject* mapEntry(MapFileJoint* joint, Mtx mtx, s32 index) {
     size = (((wp->entries[index].numJoints * sizeof(MapObject)) + 32) - 1) & ~(32 - 1);
     wp->entries[index].objects = _mapAlloc(size);
     memset(wp->entries[index].objects, 0, size);
+    PORT_MAP_LOOKUPS_CHANGED();
     return mapEntrySub(joint, NULL, mtx, TRUE, index);
 }
 
@@ -1224,6 +1236,7 @@ static void _mapLoad(MapWork* wp, BOOL group, const char* map) {
     wp->entries[group].lightTable = portMapChunk(wp->entries[group].pcMap, "light_table");
     wp->entries[group].fogTable = portMapChunk(wp->entries[group].pcMap, "fog_table");
     wp->entries[group].materialNameTable = portMapChunk(wp->entries[group].pcMap, "material_name_table");
+    PORT_MAP_LOOKUPS_CHANGED();
     wp->entries[group].vcdTable = portMapChunk(wp->entries[group].pcMap, "vcd_table");
     portMapRegisterVtxArrays(wp->entries[group].vcdTable, wp->entries[group].dat, wp->entries[group].datSize);
     if (info == NULL) {
@@ -1235,6 +1248,7 @@ static void _mapLoad(MapWork* wp, BOOL group, const char* map) {
     wp->entries[group].lightTable = mapSearchChunk(header, "light_table");
     wp->entries[group].fogTable = mapSearchChunk(header, "fog_table");
     wp->entries[group].materialNameTable = mapSearchChunk(header, "material_name_table");
+    PORT_MAP_LOOKUPS_CHANGED();
     wp->entries[group].vcdTable = mapSearchChunk(header, "vcd_table");
 #endif
     {
@@ -1400,6 +1414,7 @@ void mapUnLoad(void) {
             _mapFree(entry->objects);
             entry->numJoints = 0;
             entry->objects = NULL;
+            PORT_MAP_LOOKUPS_CHANGED();
         }
         if (entry->animData) {
             _mapFree(entry->animData);
@@ -1575,6 +1590,7 @@ void bmapUnLoad(void) {
             _mapFree(entry->objects);
             entry->numJoints = 0;
             entry->objects = NULL;
+            PORT_MAP_LOOKUPS_CHANGED();
         }
         if (entry->animData) {
             _mapFree(entry->animData);
@@ -2130,6 +2146,55 @@ static inline u8* mapMainFindTbl_(const char* nm_) {
     return NULL;
 }
 
+#ifdef TARGET_PC
+/* mapMainFindTbl_(name + suffix), cached by the anim item and the suffix (both fixed while the map
+ * is up), "not found" included: the name built and the table scanned once per map load. */
+#define MAP_TBL_CACHE 512
+static struct {
+    const void* item;
+    const char* suffix;
+    const MapWork* wp;
+    u32 gen;
+    u8* data;
+} sMapTblCache[MAP_TBL_CACHE];
+
+static u8* portMapFindTblCached(const void* item, const char* name, const char* suffix, char* buf) {
+    const MapWork* wp = mapGetWork();
+    const uintptr_t key = (uintptr_t)item ^ ((uintptr_t)suffix * 31u);
+    const u32 slot = (u32)((key >> 3) ^ (key >> 13)) & (MAP_TBL_CACHE - 1);
+    u8* data;
+    if (sMapTblCache[slot].item == item && sMapTblCache[slot].suffix == suffix && sMapTblCache[slot].wp == wp &&
+        sMapTblCache[slot].gen == sMapLookupGen) {
+        return sMapTblCache[slot].data;
+    }
+    strcpy(buf, name);
+    if (suffix) {
+        strcat(buf, suffix);
+    }
+    data = mapMainFindTbl_(buf);
+    sMapTblCache[slot].item = item;
+    sMapTblCache[slot].suffix = suffix;
+    sMapTblCache[slot].wp = wp;
+    sMapTblCache[slot].gen = sMapLookupGen;
+    sMapTblCache[slot].data = data;
+    return data;
+}
+
+#define mapMainMat(a_, i_, b_, x_)                                              \
+    {                                                                           \
+        u8* obj = portMapFindTblCached(i_, (const char*)i_->name, x_, b_);       \
+        if (obj) {                                                              \
+            mapMainMatKeys_(a_, (void*)i_, obj);                                \
+        }                                                                       \
+    }
+#define mapMainAlpha(a_, i_, b_, x_)                                            \
+    {                                                                           \
+        u8* obj = portMapFindTblCached(i_, (const char*)i_->name, x_, b_);       \
+        if (obj) {                                                              \
+            mapMainAlphaKeys_(a_, (void*)i_, obj);                              \
+        }                                                                       \
+    }
+#else
 #define mapMainMat(a_, i_, b_, x_)               \
     {                                            \
         u8* obj;                                 \
@@ -2155,6 +2220,7 @@ static inline u8* mapMainFindTbl_(const char* nm_) {
             mapMainAlphaKeys_(a_, (void*)i_, obj); \
         }                                          \
     }
+#endif
 
 /**
  * Per-frame map update from mariost: advances each playing map animation by its clock
@@ -4885,6 +4951,37 @@ MapObject* mapGetMapObj(const char* name) { // 1:1
     if (!name) {
         return 0;
     }
+#ifdef TARGET_PC
+    {
+        /* (cached by the name's address, checked again with one strcmp: a reused buffer holding
+         * another name misses; only found objects are kept, a miss can't be checked that way) */
+        static struct {
+            const char* name;
+            const MapWork* wp;
+            u32 gen;
+            MapObject* obj;
+        } sCache[256];
+        const u32 slot = (u32)(((uintptr_t)name >> 3) ^ ((uintptr_t)name >> 11)) & 255u;
+        if (sCache[slot].name == name && sCache[slot].wp == wp && sCache[slot].gen == sMapLookupGen &&
+            !strcmp(sCache[slot].obj->joints->name, name)) {
+            return sCache[slot].obj;
+        }
+        for (i = 0; i < wp->entries[0].count; i++) {
+            entry = &wp->entries[i];
+            object = entry->objects;
+            for (j = 0; j < entry->numJoints; j++, object++) {
+                if (!strcmp(object->joints->name, name)) {
+                    sCache[slot].name = name;
+                    sCache[slot].wp = wp;
+                    sCache[slot].gen = sMapLookupGen;
+                    sCache[slot].obj = object;
+                    return object;
+                }
+            }
+        }
+        return 0;
+    }
+#endif
     for (i = 0; i < wp->entries[0].count; i++) {
         entry = &wp->entries[i];
         object = entry->objects;

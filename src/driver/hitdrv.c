@@ -17,6 +17,23 @@
 #ifdef TARGET_PC
 #include <math.h>
 #include "port/map_pc.h"
+
+#ifdef TARGET_PC
+/* The collision queries' broad phase: is the hit object's bounding sphere out of reach? Squared
+ * distances instead of PSVECDistance's square root and call -- the queries walk every active hit
+ * object, many times a frame while Mario moves, and this test was the hottest part of them in the
+ * RK3326 profile (Rogueport). The same answer, up to rounding exactly at the boundary; a negative
+ * reach is out of reach, as before. */
+static inline BOOL portHitFar(const Vec* p, const Vec* c, f32 r) {
+    const f32 dx = p->x - c->x;
+    const f32 dy = p->y - c->y;
+    const f32 dz = p->z - c->z;
+    return r < 0.0f || dx * dx + dy * dy + dz * dz > r * r;
+}
+#define HIT_FAR(p, c, r) portHitFar(p, c, r)
+#else
+#define HIT_FAR(p, c, r) (PSVECDistance(p, c) > (r))
+#endif
 #endif
 
 #ifdef TARGET_PC
@@ -1009,7 +1026,7 @@ HitEntry* PORT_HOOKABLE(hitCheckVecFilter)(HitCheckQuery* query, HitFilterCallba
                 if (callback != NULL && !callback(query, hit)) {
                     continue;
                 }
-                if (PSVECDistance(&endPos, &hit->centerWorld) > reach + hit->radius) {
+                if (HIT_FAR(&endPos, &hit->centerWorld, reach + hit->radius)) {
                     continue;
                 }
                 if (hit->joint->drawMode->cullMode == 1) {
@@ -1041,7 +1058,7 @@ HitEntry* PORT_HOOKABLE(hitCheckVecFilter)(HitCheckQuery* query, HitFilterCallba
                 if (callback != NULL && !callback(query, hit2)) {
                     continue;
                 }
-                if (PSVECDistance(&endPos, &hit2->centerWorld) > reach + hit2->radius) {
+                if (HIT_FAR(&endPos, &hit2->centerWorld, reach + hit2->radius)) {
                     continue;
                 }
                 if (hit2->joint->drawMode->cullMode == 1) {
@@ -1073,7 +1090,7 @@ HitEntry* PORT_HOOKABLE(hitCheckVecFilter)(HitCheckQuery* query, HitFilterCallba
                 if (callback != NULL && !callback(query, hit3)) {
                     continue;
                 }
-                if (PSVECDistance(&endPos, &hit3->centerWorld) > reach + hit3->radius) {
+                if (HIT_FAR(&endPos, &hit3->centerWorld, reach + hit3->radius)) {
                     continue;
                 }
                 if (hit3->joint->drawMode->cullMode == 1) {
@@ -1143,7 +1160,7 @@ HitEntry* PORT_HOOKABLE(hitCheckVecFilter)(HitCheckQuery* query, HitFilterCallba
     if (query->targetDir.y == 0.0f) {
         while (entry != NULL) {
             if (callback == NULL || callback(query, entry)) {
-                if (!(PSVECDistance(&endPos, &entry->centerWorld) > reach + entry->radius)) {
+                if (!(HIT_FAR(&endPos, &entry->centerWorld, reach + entry->radius))) {
                     if (entry->joint->drawMode->cullMode == 1) {
                         query->singleSided = 1;
                     } else {
@@ -1170,7 +1187,7 @@ HitEntry* PORT_HOOKABLE(hitCheckVecFilter)(HitCheckQuery* query, HitFilterCallba
         if (query->targetDir.y == -1.0f) {
             while (entry != NULL) {
                 if (callback == NULL || callback(query, entry)) {
-                    if (!(PSVECDistance(&endPos, &entry->centerWorld) > reach + entry->radius)) {
+                    if (!(HIT_FAR(&endPos, &entry->centerWorld, reach + entry->radius))) {
                         if (entry->joint->drawMode->cullMode == 1) {
                             query->singleSided = 1;
                         } else {
@@ -1195,7 +1212,7 @@ HitEntry* PORT_HOOKABLE(hitCheckVecFilter)(HitCheckQuery* query, HitFilterCallba
         } else if (query->targetDir.y == 1.0f) {
             while (entry != NULL) {
                 if (callback == NULL || callback(query, entry)) {
-                    if (!(PSVECDistance(&endPos, &entry->centerWorld) > reach + entry->radius)) {
+                    if (!(HIT_FAR(&endPos, &entry->centerWorld, reach + entry->radius))) {
                         if (entry->joint->drawMode->cullMode == 1) {
                             query->singleSided = 1;
                         } else {
@@ -1224,7 +1241,7 @@ HitEntry* PORT_HOOKABLE(hitCheckVecFilter)(HitCheckQuery* query, HitFilterCallba
     check_entries:
         while (entry != NULL) {
             if (callback == NULL || callback(query, entry)) {
-                if (!(PSVECDistance(&endPos, &entry->centerWorld) > (reach + entry->radius))) {
+                if (!(HIT_FAR(&endPos, &entry->centerWorld, reach + entry->radius))) {
                     if (entry->joint->drawMode->cullMode == 1) {
                         query->singleSided = 1;
                     } else {

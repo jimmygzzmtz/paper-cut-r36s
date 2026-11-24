@@ -7,6 +7,7 @@
 #include "port/platform.h"
 #include "port/toggles.h"
 #include "port/frame_prof.h"
+#include "port/gx_arrays.h"
 #endif
 
 /**
@@ -38,6 +39,7 @@ int main(void) {
         DEMOBeforeRender();
         marioStDisp();
 #ifdef TARGET_PC
+        portGXKick(0); /* the frame's GX commands translated on Aurora's GX thread during marioStMain */
         portProfMark(PROF_DISP_DRAWN);
 #endif
         marioStMain();
