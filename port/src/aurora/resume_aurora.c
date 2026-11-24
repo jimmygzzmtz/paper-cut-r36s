@@ -13,6 +13,9 @@
  * and once a minute meanwhile. Beside it, resume_<game ID>.txt names the
  * save file it came from, so that Continue loads it as that file and a later
  * Save Block save goes to the player's own file. */
+#include <SDL3/SDL_atomic.h>
+#include <SDL3/SDL_thread.h>
+#include <SDL3/SDL_timer.h>
 #include <stdio.h>
 #include <string.h>
 #include "driver/seqdrv.h"
@@ -62,14 +65,12 @@ static int safe(void) {
            !portTitleTempFile(); /* (the title menu's file for the modes: never saved, title_menu.h) */
 }
 
-void portResumeFlush(void) {
+/* the resume save and its sidecar written out (the game thread at exit, or the writer thread) */
+static void writeResume(const uint8_t* image, int slot) {
     char path[1024];
     FILE* f;
-    static uint8_t header[GCI_HEADER];
-    static uint8_t meta[PORT_CARD_META_SIZE];
-    if (!sHave || !sDirty || (portReplayPlaying() || portGhostRacing())) {
-        return; /* (a replay's playback: someone else's game, not the player's to come back to) */
-    }
+    uint8_t header[GCI_HEADER];
+    static const uint8_t meta[PORT_CARD_META_SIZE];
     /* a GCI as the save warps read one (warp_pc.c): the game ID first, then
      * the card's file header (unused there), then the slot */
     memset(header, 0, sizeof(header));
@@ -81,14 +82,57 @@ void portResumeFlush(void) {
     }
     fwrite(header, 1, sizeof(header), f);
     fwrite(meta, 1, sizeof(meta), f);
-    fwrite(sImage, 1, sizeof(sImage), f);
+    fwrite(image, 1, PORT_CARD_SLOT_SIZE, f);
     fclose(f);
     portResumePath(path, sizeof(path), PORT_GAME_ID, 1);
     f = fopen(path, "w");
     if (f != NULL) {
-        fprintf(f, "%d\nv2\n", sSlot); /* v2: never made inside a house (0.4.1, safe(); warp_pc.c checks) */
+        fprintf(f, "%d\nv2\n", slot); /* v2: never made inside a house (0.4.1, safe(); warp_pc.c checks) */
         fclose(f);
     }
+}
+
+/* The minute's write on a thread of its own: on a handheld's SD card one small file's write
+ * stalled the game for over two seconds (the R36S). The snapshot is copied for it; a write still
+ * going when the next is due waits for the next frame. */
+static SDL_AtomicInt sWriting;
+static uint8_t sWriteImage[PORT_CARD_SLOT_SIZE];
+static int sWriteSlot;
+
+static int SDLCALL writerThread(void* unused) {
+    (void)unused;
+    writeResume(sWriteImage, sWriteSlot);
+    SDL_SetAtomicInt(&sWriting, 0);
+    return 0;
+}
+
+static void flushInBackground(void) {
+    SDL_Thread* thread;
+    if (!sHave || !sDirty || (portReplayPlaying() || portGhostRacing()) || SDL_GetAtomicInt(&sWriting) != 0) {
+        return;
+    }
+    memcpy(sWriteImage, sImage, sizeof(sImage));
+    sWriteSlot = sSlot;
+    SDL_SetAtomicInt(&sWriting, 1);
+    thread = SDL_CreateThread(writerThread, "resume-write", NULL);
+    if (thread == NULL) {
+        SDL_SetAtomicInt(&sWriting, 0);
+        portResumeFlush(); /* (no thread: as before) */
+        return;
+    }
+    SDL_DetachThread(thread);
+    sDirty = 0;
+    sLastWrite = sFrame;
+}
+
+void portResumeFlush(void) {
+    while (SDL_GetAtomicInt(&sWriting) != 0) {
+        SDL_Delay(1); /* (the minute's write first: the file whole before the game goes) */
+    }
+    if (!sHave || !sDirty || (portReplayPlaying() || portGhostRacing())) {
+        return; /* (a replay's playback: someone else's game, not the player's to come back to) */
+    }
+    writeResume(sImage, sSlot);
     sDirty = 0;
     sLastWrite = sFrame;
 }
@@ -158,6 +202,6 @@ void portResumeFrame(void) {
         sSlot = gp->saveSlot;
     }
     if (sDirty && sFrame - sLastWrite >= WRITE_EVERY) {
-        portResumeFlush();
+        flushInBackground();
     }
 }
